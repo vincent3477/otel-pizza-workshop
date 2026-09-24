@@ -8,14 +8,38 @@
 #
 # An `.env` anywhere else (the repo root, for example) is NOT read.
 
+# Everything the OpenTelemetry SDK inside the three Node services needs. The
+# services share this block; only OTEL_SERVICE_NAME differs per service.
+#
+# DASH0_ENDPOINT is an OTLP/gRPC endpoint (host:4317), so the protocol is grpc.
+# The auth token travels as an OTLP header, which is how Dash0 authenticates
+# ingestion. `:?` means compose stops with a readable error instead of starting
+# the app with nowhere to send telemetry.
+x-otel-environment: &otel-environment
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${DASH0_ENDPOINT:?missing DASH0_ENDPOINT - copy .env.template to pizza-app/.env and fill it in}
+  OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+  OTEL_EXPORTER_OTLP_HEADERS: Authorization=Bearer ${DASH0_AUTH_TOKEN:?missing DASH0_AUTH_TOKEN - copy .env.template to pizza-app/.env and fill it in},Dash0-Dataset=${DASH0_DATASET:-default}
+  OTEL_TRACES_EXPORTER: otlp
+  OTEL_METRICS_EXPORTER: otlp
+  OTEL_LOGS_EXPORTER: otlp
+  # The app speaks HTTP, not gRPC. Leaving this instrumentation off keeps the
+  # telemetry exporter's own gRPC calls out of the data.
+  OTEL_NODE_DISABLED_INSTRUMENTATIONS: grpc
+  # Resource attributes describe the thing emitting the telemetry. Dash0 groups
+  # and filters on these, and vcs.repository.url.full is what links a service
+  # back to its source repository.
+  OTEL_RESOURCE_ATTRIBUTES: service.namespace=pizza-app,service.version=1.0.0,deployment.environment.name=${DASH0_ENVIRONMENT:-workshop},vcs.repository.url.full=${VCS_REPOSITORY_URL:-https://github.com/vincent3477/otel-pizza-workshop}
+
 services:
   order-service:
     build: ./order-service
     ports:
       - "3000:3000"
     environment:
-      - KITCHEN_SERVICE_URL=http://kitchen-service:3001
-      - DELIVERY_SERVICE_URL=http://delivery-service:3002
+      <<: *otel-environment
+      OTEL_SERVICE_NAME: order-service
+      KITCHEN_SERVICE_URL: http://kitchen-service:3001
+      DELIVERY_SERVICE_URL: http://delivery-service:3002
     healthcheck:
       test:
         - CMD
@@ -37,7 +61,9 @@ services:
     ports:
       - "3001:3001"
     environment:
-      - SLOW_KITCHEN=${SLOW_KITCHEN:-false}
+      <<: *otel-environment
+      OTEL_SERVICE_NAME: kitchen-service
+      SLOW_KITCHEN: ${SLOW_KITCHEN:-false}
     healthcheck:
       test:
         - CMD
@@ -54,7 +80,9 @@ services:
     ports:
       - "3002:3002"
     environment:
-      - NO_DRIVERS=${NO_DRIVERS:-false}
+      <<: *otel-environment
+      OTEL_SERVICE_NAME: delivery-service
+      NO_DRIVERS: ${NO_DRIVERS:-false}
     healthcheck:
       test:
         - CMD
@@ -70,6 +98,15 @@ services:
     build: ./frontend
     ports:
       - "8080:80"
+    # Browser telemetry is optional and needs its own token, because this one
+    # is served to the browser and is therefore public. Without
+    # DASH0_WEB_AUTH_TOKEN the page works exactly as before and sends nothing.
+    environment:
+      DASH0_WEB_ENDPOINT: ${DASH0_WEB_ENDPOINT:-https://ingress.us-west-2.aws.dash0.com}
+      DASH0_WEB_AUTH_TOKEN: ${DASH0_WEB_AUTH_TOKEN:-}
+      DASH0_DATASET: ${DASH0_DATASET:-default}
+      DASH0_ENVIRONMENT: ${DASH0_ENVIRONMENT:-workshop}
+      VCS_REPOSITORY_URL: ${VCS_REPOSITORY_URL:-https://github.com/vincent3477/otel-pizza-workshop}
     depends_on:
       order-service:
         condition: service_healthy

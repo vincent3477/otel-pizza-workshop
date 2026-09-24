@@ -39,6 +39,25 @@ To stop it:
 docker compose down
 ```
 
+## Observability
+
+All three Node services are instrumented with OpenTelemetry's zero-code
+auto-instrumentation and export traces, logs and metrics to Dash0 over
+OTLP/gRPC. Nothing in `index.js` knows about it:
+
+- `package.json` pulls in `@opentelemetry/api` and
+  `@opentelemetry/auto-instrumentations-node`, and the `start` script becomes
+  `node --require @opentelemetry/auto-instrumentations-node/register index.js`.
+- `docker-compose.yml` passes the standard `OTEL_*` environment variables,
+  including the Dash0 endpoint and token read from `.env`.
+
+The frontend can additionally send browser telemetry (page views, Core Web
+Vitals, JavaScript errors, and HTTP calls that link into the backend trace) via
+the Dash0 Web SDK. It stays off until `DASH0_WEB_AUTH_TOKEN` is set, since that
+token is public once served to a browser.
+
+See the [root README](../README.md) for the setup steps.
+
 ## Watching What Happens
 
 The terminal shows all four services interleaved:

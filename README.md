@@ -1,8 +1,9 @@
 # OpenTelemetry Pizza Workshop
 
 A small pizza-ordering app built from three Node services and a web frontend.
-It ships with no instrumentation. Adding that is the workshop; this file only
-covers getting the app running.
+The three services are instrumented with OpenTelemetry's zero-code Node.js
+auto-instrumentation and report to Dash0; this file covers getting the app
+running and pointing it at your own Dash0 account.
 
 ## Prerequisites
 
@@ -29,6 +30,26 @@ cd otel-pizza-workshop
 git remote add upstream https://github.com/dash0-community/otel-pizza-workshop.git
 git remote -v
 ```
+
+## Point it at Dash0
+
+The services need an endpoint and a token before they will start. Create your
+`.env` from inside `pizza-app/`:
+
+```bash
+cd pizza-app
+cp .env.template .env
+```
+
+Then fill in two values from <https://app.dash0.com>:
+
+| Variable | Where it comes from |
+|---|---|
+| `DASH0_AUTH_TOKEN` | Settings → Auth Tokens |
+| `DASH0_ENDPOINT` | Settings → Endpoints → **OTLP/gRPC** (ends in `:4317`) |
+
+Everything else in `.env` is optional. If either value is missing,
+`docker compose up` stops and tells you which one.
 
 ## Run it
 
@@ -64,6 +85,28 @@ in. For one service on its own:
 docker compose logs -f order-service
 ```
 
+## What lands in Dash0
+
+Order a pizza, then look in Dash0. No tracing code was added to the services —
+the OpenTelemetry Node.js auto-instrumentation is loaded before the app starts
+and patches Express, `http` and Pino for you.
+
+- **Traces** — one trace per order, spanning all three services: the inbound
+  `POST /order`, the two calls into Kitchen Service, the call into Delivery
+  Service, and the Express middleware in between.
+- **Logs** — every Pino line, each one carrying the `trace_id` and `span_id` of
+  the request that produced it, so a log jumps straight to its trace.
+- **Metrics** — request rate, duration and error counts per service, plus
+  Node.js runtime metrics such as event-loop lag and heap usage.
+
+The `/health` endpoints are polled every five seconds by the container health
+checks, so their spans show up too. Filter them out with
+`http.route != /health` when they get in the way.
+
+Browser monitoring is off until you set `DASH0_WEB_AUTH_TOKEN` — see the
+comments in `.env.template`. It needs a second, ingest-only token because that
+one is served to the browser and is therefore public.
+
 ## Failure modes you can switch on
 
 ```bash
@@ -84,6 +127,16 @@ Rebuild: `docker compose up -d --build`.
 
 **Build fails** — `docker compose build --no-cache`, and check the JSON in any
 `package.json` you edited.
+
+**`missing DASH0_AUTH_TOKEN` / `missing DASH0_ENDPOINT`** — the `.env` is absent
+or incomplete. It has to live at `pizza-app/.env`, next to `docker-compose.yml`;
+one in the repo root is not read.
+
+**App runs but nothing shows up in Dash0** — `docker compose logs order-service`
+and look for exporter errors. `UNAUTHENTICATED` means the token is wrong;
+`DEADLINE_EXCEEDED` or a DNS failure means `DASH0_ENDPOINT` is wrong or blocked.
+Check it is the **OTLP/gRPC** endpoint ending in `:4317`, and that the dataset
+you are looking at in Dash0 matches `DASH0_DATASET`.
 
 ## Credits
 
